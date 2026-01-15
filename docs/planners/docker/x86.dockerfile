@@ -76,6 +76,7 @@ RUN apt-get update && apt-get install -y \
   python3-pip \
   python3-ipdb \
   python3-tk \
+  tcl \
   sudo git bash unattended-upgrades \
   apt-utils \
   terminator \
@@ -113,6 +114,7 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 ARG CACHE_DATE=2024-07-19
 
 COPY entrypoint.sh /opt/entrypoint.sh
+COPY patch_stdgpu.py /opt/patch_stdgpu.py
 RUN chmod +x /opt/entrypoint.sh
 
 
@@ -145,9 +147,17 @@ RUN apt-get update && \
     cd /usr/src/googletest && cmake . && cmake --build . --target install && \
     rm -rf /var/lib/apt/lists/*
 
+RUN sed -i -E '/THRUST_VERSION/ s@//.*$@@' "${CUDA_HOME}/include/thrust/version.h" && \
+    sed -i -E '/THRUST_VERSION/ s@/\\*.*\\*/@@' "${CUDA_HOME}/include/thrust/version.h"
+
 RUN cd /pkgs &&  git clone https://github.com/valtsblukis/nvblox.git && \
+    sed -i 's#<nvToolsExt.h>#<nvtx3/nvToolsExt.h>#' /pkgs/nvblox/nvblox/include/nvblox/utils/nvtx_ranges.h && \
     cd nvblox && cd nvblox && mkdir build && cd build && \
-    cmake .. -DPRE_CXX11_ABI_LINKABLE=ON && \
+    TORCH_CXX11=$(python -c "import torch; print(int(torch._C._GLIBCXX_USE_CXX11_ABI))") && \
+    cmake .. -DPRE_CXX11_ABI_LINKABLE=ON -DBUILD_TESTING=OFF \
+    -DCMAKE_CXX_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11} \
+    -DCMAKE_CUDA_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11} && \
+    python /opt/patch_stdgpu.py build/_deps && \
     make -j32 && \
     make install
 
