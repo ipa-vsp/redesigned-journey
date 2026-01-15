@@ -1,0 +1,63 @@
+services:
+  curobo:
+    build:
+      context: .
+      dockerfile: x86.dockerfile
+    image: curobo_docker:x86
+    container_name: curobo_x86
+    stdin_open: true
+    tty: true
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      NVIDIA_DISABLE_REQUIRE: "1"
+      NVIDIA_DRIVER_CAPABILITIES: "all"
+      DISPLAY: "unix${DISPLAY}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /dev:/dev
+    devices:
+      - /dev/dri
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    extra_hosts:
+      - "ros1-docker:127.0.0.1"
+
+  curobo_user:
+    build:
+      context: .
+      dockerfile: user.dockerfile
+      args:
+        IMAGE_TAG: "x86"
+        USERNAME: "${USER}"
+        USER_ID: "${USER_ID}"
+    depends_on:
+      - curobo
+    image: curobo_docker:user_x86
+    container_name: curobo_user_x86
+    stdin_open: true
+    tty: true
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      NVIDIA_DISABLE_REQUIRE: "1"
+      NVIDIA_DRIVER_CAPABILITIES: "all"
+      DISPLAY: "unix${DISPLAY}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /dev:/dev
+      - /home/${USER}/code:/home/${USER}/code
+    devices:
+      - /dev/dri
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    extra_hosts:
+      - "ros1-docker:127.0.0.1"
