@@ -22,7 +22,7 @@ ARG CACHE_DATE=2024-07-19
 # Set up sudo user
 #RUN /sbin/adduser --disabled-password --gecos '' --uid $USER_ID $USERNAME
 # RUN useradd -l -u 1000 $USERNAME
-RUN useradd -l -u $USER_ID -g users $USERNAME
+RUN useradd -l -o -u $USER_ID -g users $USERNAME
 
 RUN /sbin/adduser $USERNAME sudo
 RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers

@@ -8,7 +8,7 @@
 ## without an express license agreement from NVIDIA CORPORATION or
 ## its affiliates is strictly prohibited.
 ##
-FROM ghcr.io/ipa-vsp/docker_envs:24.04-jazzy AS torch_cuda_base
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04 AS torch_cuda_base
 
 LABEL maintainer "User Name"
 
@@ -17,20 +17,7 @@ LABEL maintainer "User Name"
 # See: https://github.com/phusion/baseimage-docker/issues/58
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
 
-# Install CUDA 12.8 toolkit
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    gnupg \
-    wget \
-    && rm -rf /var/lib/apt/lists/* \
-    && wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb \
-    && rm cuda-keyring_1.1-1_all.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends cuda-toolkit-12-8 \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV CUDA_HOME=/usr/local/cuda-12.8
+ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
 
@@ -50,12 +37,18 @@ ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
 RUN apt-get update && apt-get install -y \
   tzdata \
   software-properties-common \
+  ca-certificates \
+  curl \
+  gnupg \
   && rm -rf /var/lib/apt/lists/* \
   && ln -fs /usr/share/zoneinfo/Europe/Berlin /etc/localtime \
   && echo "Europe/Berlin" > /etc/timezone \
   && dpkg-reconfigure -f noninteractive tzdata \
-  && add-apt-repository -y ppa:deadsnakes/ppa \
-  && add-apt-repository -y ppa:git-core/ppa \
+  && mkdir -p /etc/apt/keyrings \
+  && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x6A755776" \
+    | gpg --dearmor -o /etc/apt/keyrings/deadsnakes.gpg \
+  && echo "deb [signed-by=/etc/apt/keyrings/deadsnakes.gpg] http://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu noble main" \
+    > /etc/apt/sources.list.d/deadsnakes-ppa.list \
   && apt-get update && apt-get install -y \
   curl \
   lsb-release \
@@ -152,12 +145,13 @@ RUN sed -i -E '/THRUST_VERSION/ s@//.*$@@' "${CUDA_HOME}/include/thrust/version.
 
 RUN cd /pkgs &&  git clone https://github.com/valtsblukis/nvblox.git && \
     sed -i 's#<nvToolsExt.h>#<nvtx3/nvToolsExt.h>#' /pkgs/nvblox/nvblox/include/nvblox/utils/nvtx_ranges.h && \
+    sed -i 's/#include <string>/#include <array>\\n#include <string>/' /pkgs/nvblox/nvblox/include/nvblox/utils/rates.h && \
     cd nvblox && cd nvblox && mkdir build && cd build && \
     TORCH_CXX11=$(python -c "import torch; print(int(torch._C._GLIBCXX_USE_CXX11_ABI))") && \
     cmake .. -DPRE_CXX11_ABI_LINKABLE=ON -DBUILD_TESTING=OFF \
     -DCMAKE_CXX_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11} \
     -DCMAKE_CUDA_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11} && \
-    python /opt/patch_stdgpu.py build/_deps && \
+    python /opt/patch_stdgpu.py _deps && \
     make -j32 && \
     make install
 
@@ -173,6 +167,20 @@ RUN python -m pip install "robometrics[evaluator] @ git+https://github.com/fishb
 
 # update ucx path: https://github.com/openucx/ucc/issues/476
 RUN export LD_LIBRARY_PATH=/opt/hpcx/ucx/lib:$LD_LIBRARY_PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    ROS_APT_SOURCE_VERSION="$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest | grep -F \"tag_name\" | awk -F\\\" '{print $4}')" && \
+    curl -L -o /tmp/ros2-apt-source.deb "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(. /etc/os-release && echo ${UBUNTU_CODENAME:-${VERSION_CODENAME}})_all.deb" && \
+    dpkg -i /tmp/ros2-apt-source.deb && \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ros-dev-tools \
+      ros-jazzy-ros-base && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN touch /opt/venv/lib/python3.11/site-packages/isaacsim/kit/EULA_ACCEPTED && \
+    chgrp users /opt/venv/lib/python3.11/site-packages/isaacsim/kit/EULA_ACCEPTED && \
+    chmod 664 /opt/venv/lib/python3.11/site-packages/isaacsim/kit/EULA_ACCEPTED
+
 
 ENTRYPOINT ["/opt/entrypoint.sh"]
 CMD ["/bin/bash"]
