@@ -21,16 +21,17 @@ sudo apt install python3.11 python3.11-venv python3.11-dev
 - `python3 -m pytest .` to verify that all unit tests pass.
 - Look at python scripts in examples/ path for examples.
 
-### Docker Instructions (x86_64 only)
+### Installation on Python Virtual Environment
+
 ```bash
-cd /path/to/curobo/docs/planners/docker
-USER_ID=$(id -g "$USER") docker compose build
-```
-Start base image:
-```bash
-USER_ID=$(id -g "$USER") docker compose run --rm curobo
-```
-Start user image (bind-mounts `/home/$USER/code`):
-```bash
-USER_ID=$(id -g "$USER") docker compose run --rm curobo_user
+python3.11 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -U torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
+git clone -b v0.7.7 https://github.com/NVlabs/curobo.git
+cd curobo
+pip install -e . --no-build-isolation
+pip install pytest
+python3 -m pytest .
+pip install "isaacsim[all,extscache]==5.1.0" --extra-index-url https://pypi.nvidia.com
 ```

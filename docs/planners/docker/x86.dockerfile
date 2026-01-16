@@ -8,7 +8,7 @@
 ## without an express license agreement from NVIDIA CORPORATION or
 ## its affiliates is strictly prohibited.
 ##
-FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04 AS torch_cuda_base
+FROM nvcr.io/nvidia/isaac-sim:5.1.0 AS torch_cuda_base
 
 LABEL maintainer "User Name"
 
@@ -16,6 +16,16 @@ LABEL maintainer "User Name"
 # Deal with getting tons of debconf messages
 # See: https://github.com/phusion/baseimage-docker/issues/58
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+
+ARG ISAACSIM_ROOT_PATH_ARG
+ENV ISAACSIM_ROOT_PATH=${ISAACSIM_ROOT_PATH_ARG}
+
+ARG DOCKER_USER_HOME_ARG
+ENV DOCKER_USER_HOME=${DOCKER_USER_HOME_ARG}
+
+# Set environment variables
+ENV LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
 
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
@@ -30,157 +40,89 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgles2-mesa-dev && \
     rm -rf /var/lib/apt/lists/*
 
-ENV NVIDIA_VISIBLE_DEVICES all
-ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
-
-# Set timezone info
-RUN apt-get update && apt-get install -y \
-  tzdata \
-  software-properties-common \
-  ca-certificates \
-  curl \
-  gnupg \
-  && rm -rf /var/lib/apt/lists/* \
-  && ln -fs /usr/share/zoneinfo/Europe/Berlin /etc/localtime \
-  && echo "Europe/Berlin" > /etc/timezone \
-  && dpkg-reconfigure -f noninteractive tzdata \
-  && mkdir -p /etc/apt/keyrings \
-  && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x6A755776" \
-    | gpg --dearmor -o /etc/apt/keyrings/deadsnakes.gpg \
-  && echo "deb [signed-by=/etc/apt/keyrings/deadsnakes.gpg] http://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu noble main" \
-    > /etc/apt/sources.list.d/deadsnakes-ppa.list \
-  && apt-get update && apt-get install -y \
-  curl \
-  lsb-release \
-  wget \
-  build-essential \
-  cmake \
-  git \
-  git-lfs \
-  iputils-ping \
-  make \
-  openssh-server \
-  openssh-client \
-  libeigen3-dev \
-  libssl-dev \
-  python3.11 \
-  python3.11-dev \
-  python3.11-venv \
-  python3-pip \
-  python3-ipdb \
-  python3-tk \
-  tcl \
-  sudo git bash unattended-upgrades \
-  apt-utils \
-  terminator \
-  glmark2 \
-  && rm -rf /var/lib/apt/lists/*
-
-RUN python3.11 -m venv /opt/venv
-
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-
-RUN python -m pip install --upgrade pip && \
-    python -m pip install wstool && \
-    python -m pip install -U torch==2.7.0 torchvision==0.22.0 \
-    --index-url https://download.pytorch.org/whl/cu128 && \
-    python -m pip install "isaacsim[all,extscache]==5.1.0" \
-    --extra-index-url https://pypi.nvidia.com
-
-# push defaults to bashrc:
-RUN apt-get update && apt-get install --reinstall -y \
-  libmpich-dev \
-  hwloc-nox libmpich12 mpich \
-  && rm -rf /var/lib/apt/lists/*
-
-# This is required to enable mpi lib access:
-ENV PATH="${PATH}:/opt/hpcx/ompi/bin"
-ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/hpcx/ompi/lib"
-
-
-
-ENV TORCH_CUDA_ARCH_LIST "8.9+PTX"
-ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
-
-# Add cache date to avoid using cached layers older than this
-ARG CACHE_DATE=2024-07-19
-
-COPY entrypoint.sh /opt/entrypoint.sh
-COPY patch_stdgpu.py /opt/patch_stdgpu.py
-RUN chmod +x /opt/entrypoint.sh
-
-
-RUN pip install "robometrics[evaluator] @ git+https://github.com/fishbotics/robometrics.git"
-
-# if you want to use a different version of curobo, create folder as docker/pkgs and put your
-# version of curobo there. Then uncomment below line and comment the next line that clones from
-# github
-
-# COPY pkgs /pkgs
-
-RUN mkdir /pkgs && cd /pkgs && git clone https://github.com/NVlabs/curobo.git
-
-RUN cd /pkgs/curobo && pip3 install .[dev,usd] --no-build-isolation
-
-WORKDIR /pkgs/curobo
-
-# Optionally install nvblox:
-
-# we require this environment variable to  render images in unit test curobo/tests/nvblox_test.py
-
-ENV PYOPENGL_PLATFORM=egl
-
-# add this file to enable EGL for rendering
-
-RUN echo '{"file_format_version": "1.0.0", "ICD": {"library_path": "libEGL_nvidia.so.0"}}' >> /usr/share/glvnd/egl_vendor.d/10_nvidia.json
-
-RUN apt-get update && \
-    apt-get install -y libgoogle-glog-dev libgtest-dev curl libsqlite3-dev libbenchmark-dev && \
-    cd /usr/src/googletest && cmake . && cmake --build . --target install && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN sed -i -E '/THRUST_VERSION/ s@//.*$@@' "${CUDA_HOME}/include/thrust/version.h" && \
-    sed -i -E '/THRUST_VERSION/ s@/\\*.*\\*/@@' "${CUDA_HOME}/include/thrust/version.h"
-
-RUN cd /pkgs &&  git clone https://github.com/valtsblukis/nvblox.git && \
-    sed -i 's#<nvToolsExt.h>#<nvtx3/nvToolsExt.h>#' /pkgs/nvblox/nvblox/include/nvblox/utils/nvtx_ranges.h && \
-    sed -i 's/#include <string>/#include <array>\\n#include <string>/' /pkgs/nvblox/nvblox/include/nvblox/utils/rates.h && \
-    cd nvblox && cd nvblox && mkdir build && cd build && \
-    TORCH_CXX11=$(python -c "import torch; print(int(torch._C._GLIBCXX_USE_CXX11_ABI))") && \
-    cmake .. -DPRE_CXX11_ABI_LINKABLE=ON -DBUILD_TESTING=OFF \
-    -DCMAKE_CXX_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11} \
-    -DCMAKE_CUDA_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX11} && \
-    python /opt/patch_stdgpu.py _deps && \
-    make -j32 && \
-    make install
-
-RUN cd /pkgs && git clone https://github.com/nvlabs/nvblox_torch.git && \
-    cd nvblox_torch && \
-    sh install.sh $(python -c 'import torch.utils; print(torch.utils.cmake_prefix_path)') && \
-    python3 -m pip install -e .
-
-RUN python -m pip install pyrealsense2 opencv-python transforms3d
-
-# install benchmarks:
-RUN python -m pip install "robometrics[evaluator] @ git+https://github.com/fishbotics/robometrics.git"
-
-# update ucx path: https://github.com/openucx/ucc/issues/476
-RUN export LD_LIBRARY_PATH=/opt/hpcx/ucx/lib:$LD_LIBRARY_PATH
-
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
-    ROS_APT_SOURCE_VERSION="$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest | grep -F \"tag_name\" | awk -F\\\" '{print $4}')" && \
-    curl -L -o /tmp/ros2-apt-source.deb "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(. /etc/os-release && echo ${UBUNTU_CODENAME:-${VERSION_CODENAME}})_all.deb" && \
-    dpkg -i /tmp/ros2-apt-source.deb && \
+# Install dependencies and remove cache
+RUN --mount=type=cache,target=/var/cache/apt \
     apt-get update && apt-get install -y --no-install-recommends \
-      ros-dev-tools \
-      ros-jazzy-ros-base && \
+    build-essential \
+    cmake \
+    git \
+    libglib2.0-0 \
+    ncurses-term \
+    wget && \
+    apt -y autoremove && apt clean autoclean && \
     rm -rf /var/lib/apt/lists/*
 
-RUN touch /opt/venv/lib/python3.11/site-packages/isaacsim/kit/EULA_ACCEPTED && \
-    chgrp users /opt/venv/lib/python3.11/site-packages/isaacsim/kit/EULA_ACCEPTED && \
-    chmod 664 /opt/venv/lib/python3.11/site-packages/isaacsim/kit/EULA_ACCEPTED
+# Detect Ubuntu version and install CUDA 12.8 via NVIDIA network repo (cuda-keyring)
+RUN set -euo pipefail && \
+    . /etc/os-release && \
+    case "$ID" in \
+      ubuntu) \
+        case "$VERSION_ID" in \
+          "20.04") cuda_repo="ubuntu2004";; \
+          "22.04") cuda_repo="ubuntu2204";; \
+          "24.04") cuda_repo="ubuntu2404";; \
+          *) echo "Unsupported Ubuntu $VERSION_ID"; exit 1;; \
+        esac ;; \
+      *) echo "Unsupported base OS: $ID"; exit 1 ;; \
+    esac && \
+    apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
+    wget -q https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo}/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm -f cuda-keyring_1.1-1_all.deb && \
+    wget -q https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo}/x86_64/cuda-${cuda_repo}.pin && \
+    mv cuda-${cuda_repo}.pin /etc/apt/preferences.d/cuda-repository-pin-600 && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends cuda-toolkit-12-8 && \
+    apt-get -y autoremove && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 
-ENTRYPOINT ["/opt/entrypoint.sh"]
-CMD ["/bin/bash"]
+ENV CUDA_HOME=/usr/local/cuda-12.8
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV TORCH_CUDA_ARCH_LIST=8.0+PTX
+
+# Copy the Isaac Lab directory (files to exclude are defined in .dockerignore)
+COPY ../ ${ISAACLAB_PATH}
+
+# Set up a symbolic link between the installed Isaac Sim root folder and _isaac_sim in the Isaac Lab directory
+RUN ln -sf ${ISAACSIM_ROOT_PATH} ${ISAACLAB_PATH}/_isaac_sim
+
+# for singularity usage, have to create the directories that will binded
+RUN mkdir -p ${ISAACSIM_ROOT_PATH}/kit/cache && \
+    mkdir -p ${DOCKER_USER_HOME}/.cache/ov && \
+    mkdir -p ${DOCKER_USER_HOME}/.cache/pip && \
+    mkdir -p ${DOCKER_USER_HOME}/.cache/nvidia/GLCache &&  \
+    mkdir -p ${DOCKER_USER_HOME}/.nv/ComputeCache && \
+    mkdir -p ${DOCKER_USER_HOME}/.nvidia-omniverse/logs && \
+    mkdir -p ${DOCKER_USER_HOME}/.local/share/ov/data && \
+    mkdir -p ${DOCKER_USER_HOME}/Documents
+
+# for singularity usage, create NVIDIA binary placeholders
+RUN touch /bin/nvidia-smi && \
+    touch /bin/nvidia-debugdump && \
+    touch /bin/nvidia-persistenced && \
+    touch /bin/nvidia-cuda-mps-control && \
+    touch /bin/nvidia-cuda-mps-server && \
+    touch /etc/localtime && \
+    mkdir -p /var/run/nvidia-persistenced && \
+    touch /var/run/nvidia-persistenced/socket
+
+# Install cuRobo from source (pinned commit); needs CUDA env and Torch
+RUN ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install --no-build-isolation \
+    "nvidia-curobo @ git+https://github.com/NVlabs/curobo.git@ebb71702f3f70e767f40fd8e050674af0288abe8"
+
+# aliasing isaaclab.sh and python for convenience
+RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${HOME}/.bashrc && \
+    echo "alias isaaclab=${ISAACLAB_PATH}/isaaclab.sh" >> ${HOME}/.bashrc && \
+    echo "alias python=${ISAACLAB_PATH}/_isaac_sim/python.sh" >> ${HOME}/.bashrc && \
+    echo "alias python3=${ISAACLAB_PATH}/_isaac_sim/python.sh" >> ${HOME}/.bashrc && \
+    echo "alias pip='${ISAACLAB_PATH}/_isaac_sim/python.sh -m pip'" >> ${HOME}/.bashrc && \
+    echo "alias pip3='${ISAACLAB_PATH}/_isaac_sim/python.sh -m pip'" >> ${HOME}/.bashrc && \
+    echo "alias tensorboard='${ISAACLAB_PATH}/_isaac_sim/python.sh ${ISAACLAB_PATH}/_isaac_sim/tensorboard'" >> ${HOME}/.bashrc && \
+    echo "export TZ=$(date +%Z)" >> ${HOME}/.bashrc && \
+    echo "shopt -s histappend" >> /root/.bashrc && \
+    echo "PROMPT_COMMAND='history -a'" >> /root/.bashrc
+
+# make working directory as the Isaac Lab directory
+# this is the default directory when the container is run
+WORKDIR ${ISAACLAB_PATH}
